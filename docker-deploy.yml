@@ -1,0 +1,69 @@
+name: Containerize and deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["docker-demonstration"]
+
+concurrency:
+  group: ${{ github.event.repository.name }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"  
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint code
+        run: npm run lint
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build project
+        run: npm run build
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build the Docker image
+        run: docker build ./ --file Dockerfile --tag ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE }}:latest
+
+      - name: Push the Docker image
+        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE }}:latest
+
+  deploy:
+    needs: publish
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run the image
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE }}:latest
+          docker stop demonstration-cicd || true
+          docker rm demonstration-cicd || true
+          docker run --detach --publish 80:80 --name demonstration-cicd ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKERHUB_IMAGE }}:latest
